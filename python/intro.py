@@ -18,7 +18,14 @@ Functions:
 
 # %% ---- 2024-05-21 ------------------------
 # Requirements and constants
+import time
 import random
+import numpy as np
+import gradio as gr
+
+from PIL import Image
+from threading import Thread
+
 from psychopy import visual, core, event
 from psychopy.hardware import keyboard
 
@@ -44,10 +51,16 @@ class MainWindow(object):
     # create some stimuli
     msg = visual.TextStim(
         win, text=u"\u00A1Hola mundo!", pos=[0, -3])
+
     grating = visual.GratingStim(
-        win=win, mask='circle', size=3, pos=[-4, 0], sf=3)
+        win=win, mask='circle', size=3, pos=[-4, 0], sf=3, color='white')
+
     fixation = visual.GratingStim(
         win=win, size=0.2, pos=[0, 0], sf=0, color='red')
+
+    # Variables
+    screenshot_img = None
+    screenshot_countdown = False
 
     def __init__(self):
         for e in [self.msg, self.grating, self.fixation]:
@@ -62,6 +75,13 @@ class MainWindow(object):
         self.msg.text = f'Phase: {self.d_phase:.2f}'
         self.advance_phase()
 
+        self.win.flip()
+
+        if self.screenshot_countdown > 0:
+            self.screenshot_countdown -= 1
+            if self.screenshot_countdown == 1:
+                self.screenshot()
+
     def advance_phase(self):
         d_phase = self.d_phase
         # Example: grating.setPhase(0.05, '+')  # advance phase by 0.05 of a cycle
@@ -69,16 +89,23 @@ class MainWindow(object):
 
     def increase_d_phase(self):
         self.d_phase += 0.01
-        logger.debug(f'Changed d_phase: {self.d_phase}')
+        logger.debug(f'Changed d_phase: {self.d_phase:.2f}')
 
     def decrease_d_phase(self):
         self.d_phase -= 0.01
-        logger.debug(f'Changed d_phase: {self.d_phase}')
+        logger.debug(f'Changed d_phase: {self.d_phase:.2f}')
 
     def change_color(self):
         color = random_color()
         self.fixation.color = color
         logger.debug(f'Changed color: {color}')
+        print(self.screenshot())
+
+    def screenshot(self):
+        # ! It only works in THIS class.
+        img = self.win.screenshot
+        self.screenshot_img = img
+        return img
 
 
 class Controller(object):
@@ -103,58 +130,107 @@ class Controller(object):
 main_window = MainWindow()
 controller = Controller()
 
-# create a keyboard component
-# kb = keyboard.Keyboard()
+# --------------------
 
-# draw the stimuli and update the window
+
+class GradioEventHandler:
+    def slider_d_phase(self, value):
+        main_window.d_phase = value
+        return self.summary_output()
+
+    def slider_sf(self, value):
+        main_window.grating.sf = value
+        return self.summary_output()
+
+    def slider_ori(self, value):
+        main_window.grating.ori = value
+        return self.summary_output()
+
+    def colorPicker_grating(self, value):
+        main_window.grating.color = value
+        return self.summary_output()
+
+    def summary_output(self):
+        main_window.screenshot_countdown = 5
+        while main_window.screenshot_countdown > 0:
+            time.sleep(0.001)
+        return main_window.screenshot_img
+
+    def image_screenshot_onclick(self, img, evt: gr.SelectData):
+        x = evt.index[0]
+        y = evt.index[1]
+        width, height = main_window.size
+        deg_x = (x - width / 2) / (width/2) * 12
+        deg_y = - (y - height / 2) / (height/2) * 12 * (height / width)
+        main_window.grating.pos = [deg_x, deg_y]
+        return self.summary_output()
+
+
+event_handler = GradioEventHandler()
+
+with gr.Blocks() as demo:
+    # --------------------
+    # Layout
+    slider_d_phase = gr.Slider(
+        label='d_phase', minimum=-0.2, maximum=0.2, value=main_window.d_phase)
+
+    slider_sf = gr.Slider(
+        label='sf', minimum=1.0, maximum=5.0, value=main_window.grating.sf[0])
+
+    slider_ori = gr.Slider(
+        label='ori', minimum=0, maximum=360, value=main_window.grating.ori)
+
+    colorPicker_grating = gr.ColorPicker(value=main_window.grating.color)
+
+    image_screenshot = gr.Image(label='screenshot', value=None)
+
+    txt = gr.Textbox('textbox')
+
+    # --------------------
+    # Handlers
+    image_screenshot.select(
+        fn=event_handler.image_screenshot_onclick, inputs=[image_screenshot], outputs=[image_screenshot])
+
+    slider_d_phase.change(
+        fn=event_handler.slider_d_phase, inputs=[slider_d_phase], outputs=[image_screenshot])
+
+    slider_sf.change(
+        fn=event_handler.slider_sf, inputs=[slider_sf], outputs=[image_screenshot])
+
+    slider_ori.change(
+        fn=event_handler.slider_ori, inputs=[slider_ori], outputs=[image_screenshot])
+
+    colorPicker_grating.change(
+        fn=event_handler.colorPicker_grating, inputs=[colorPicker_grating], outputs=[image_screenshot])
+
+
+Thread(target=demo.launch, kwargs=dict(), daemon=True).start()
+
+# --------------------
+# Display loop
+# Draw the stimuli and update the window
 while True:  # this creates a never-ending loop
     main_window.update_frame()
-    main_window.win.flip()
 
     controller.update_frame()
 
-    if controller.check_key('space'):
-        main_window.change_color()
+    # if controller.check_key('space'):
+    #     main_window.change_color()
 
-    if controller.check_key('left'):
-        main_window.change_position([-4, 0])
+    # if controller.check_key('left'):
+    #     main_window.change_position([-4, 0])
 
-    if controller.check_key('right'):
-        main_window.change_position([4, 0])
+    # if controller.check_key('right'):
+    #     main_window.change_position([4, 0])
 
-    if controller.check_key('up'):
-        main_window.increase_d_phase()
+    # if controller.check_key('up'):
+    #     main_window.increase_d_phase()
 
-    if controller.check_key('down'):
-        main_window.decrease_d_phase()
+    # if controller.check_key('down'):
+    #     main_window.decrease_d_phase()
 
     if controller.check_key('escape'):
         break
-
-    # keys = kb.getKeys()
-    # if len(keys) > 0:
-    #     for key in keys:
-    #         print(key.name)
-
-    #     if any(key == 'space' for key in keys):
-    #         main_window.change_color()
-
-    #     if any(key == 'left' for key in keys):
-    #         main_window.change_position([-4, 0])
-
-    #     if any(key == 'right' for key in keys):
-    #         main_window.change_position([4, 0])
-
-    #     if any(key == 'up' for key in keys):
-    #         main_window.increase_d_phase()
-
-    #     if any(key == 'down' for key in keys):
-    #         main_window.decrease_d_phase()
-
-    #     if any(key == 'escape' for key in keys):
-    #         break
-
-    # event.clearEvents()
 
 # cleanup
 main_window.win.close()
